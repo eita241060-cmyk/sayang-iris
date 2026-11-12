@@ -1,0 +1,657 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Redline — dodge the road</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --sky-high:#241726;
+    --sky-horizon:#FF9A56;
+    --oil:#FF7A3D;
+    --oil-hot:#FFC24B;
+    --hazard:#7C8CFF;
+    --text:#F2ECE4;
+    --text-dim:rgba(242,236,228,.55);
+  }
+  *{box-sizing:border-box;}
+  html,body{
+    margin:0; padding:0; height:100%; overflow:hidden;
+    background:linear-gradient(var(--sky-high), var(--sky-horizon));
+    font-family:'Space Grotesk', sans-serif;
+    color:var(--text);
+    -webkit-tap-highlight-color:transparent;
+  }
+  #canvas-container{ position:fixed; inset:0; touch-action:none; }
+  #canvas-container canvas{ display:block; width:100%; height:100%; }
+
+  #hud{
+    position:fixed; top:0; left:0; right:0;
+    display:flex; justify-content:space-between; align-items:flex-start;
+    padding:calc(env(safe-area-inset-top,0px) + 18px) 22px 0;
+    pointer-events:none;
+    font-variant-numeric:tabular-nums;
+  }
+  .stat{display:flex; flex-direction:column; gap:2px;}
+  .stat.right{align-items:flex-end;}
+  .stat .label{font-size:12px; color:var(--text-dim); letter-spacing:.02em;}
+  .stat .value{font-size:28px; font-weight:700; line-height:1;}
+  #combo{
+    font-size:13px; color:var(--oil-hot); font-weight:500;
+    height:16px; margin-top:2px; opacity:0; transition:opacity .15s ease;
+  }
+  #lives{display:flex; gap:6px; margin-top:8px;}
+  .pip{
+    width:9px; height:9px; border-radius:50%;
+    background:var(--oil);
+    box-shadow:0 0 6px var(--oil);
+    transition:background .25s ease, box-shadow .25s ease, transform .25s ease;
+  }
+  .pip.lost{background:rgba(242,236,228,.15); box-shadow:none; transform:scale(.7);}
+
+  #speedHud{
+    position:fixed; bottom:calc(env(safe-area-inset-bottom,0px) + 22px); right:22px;
+    text-align:right; pointer-events:none; font-variant-numeric:tabular-nums;
+  }
+  #speedHud .label{font-size:11px; color:var(--text-dim);}
+  #speedHud .value{font-size:22px; font-weight:700;}
+
+  #overlay{
+    position:fixed; inset:0;
+    display:flex; align-items:center; justify-content:center;
+    background:rgba(20,14,20,.72);
+    backdrop-filter:blur(2px);
+    transition:opacity .35s ease;
+    z-index:10;
+  }
+  #overlay.hidden{opacity:0; pointer-events:none;}
+  .card{
+    display:flex; flex-direction:column; align-items:center;
+    text-align:center; gap:14px; padding:0 28px; max-width:380px;
+  }
+  .title{
+    font-family:'Bebas Neue', sans-serif; font-weight:400;
+    font-size:clamp(56px,16vw,88px);
+    letter-spacing:.04em;
+    color:var(--oil-hot);
+    text-shadow:0 0 28px rgba(255,122,61,.55), 0 0 70px rgba(255,122,61,.25);
+    margin:0;
+  }
+  .sub{
+    font-size:15px; color:var(--text-dim); line-height:1.5; margin:0;
+    max-width:290px;
+  }
+  .result{
+    font-family:'Bebas Neue', sans-serif; font-weight:400; letter-spacing:.03em;
+    font-size:34px; color:var(--text); margin:0;
+  }
+  .result-nums{font-size:14px; color:var(--text-dim); margin:0;}
+  button{
+    appearance:none; border:none; cursor:pointer;
+    font-family:'Space Grotesk', sans-serif;
+    font-size:16px; font-weight:500; color:#241726;
+    background:var(--oil-hot);
+    padding:13px 34px; border-radius:999px;
+    box-shadow:0 0 24px rgba(255,194,75,.35);
+    transition:transform .15s ease, box-shadow .15s ease;
+    margin-top:6px;
+  }
+  button:hover{ transform:translateY(-1px); box-shadow:0 0 30px rgba(255,194,75,.5); }
+  button:active{ transform:translateY(0); }
+  button:focus-visible{ outline:2px solid var(--hazard); outline-offset:3px; }
+
+  #vignette{
+    position:fixed; inset:0; pointer-events:none;
+    box-shadow:inset 0 0 0 0 rgba(124,140,255,0);
+    transition:box-shadow .5s ease;
+    z-index:5;
+  }
+  @media (prefers-reduced-motion: reduce){
+    button, .pip, #overlay{ transition:none; }
+  }
+</style>
+</head>
+<body>
+
+<div id="canvas-container" role="img" aria-label="Redline, a first-person driving game where you steer a car between lanes to collect oil drums and avoid pedestrians and traffic."></div>
+<div id="vignette"></div>
+
+<div id="hud">
+  <div class="stat">
+    <span class="label">oil</span>
+    <span class="value" id="scoreVal">0</span>
+    <span id="combo"></span>
+    <div id="lives"><span class="pip"></span><span class="pip"></span><span class="pip"></span></div>
+  </div>
+  <div class="stat right">
+    <span class="label">best</span>
+    <span class="value" id="bestVal">0</span>
+  </div>
+</div>
+
+<div id="speedHud">
+  <div class="label">speed</div>
+  <div class="value" id="speedVal">0 km/h</div>
+</div>
+
+<div id="overlay">
+  <div class="card" id="startCard">
+    <p class="title">Redline</p>
+    <p class="sub">Grab the oil. Dodge people and traffic.<br>Steer with your finger, mouse drag, or arrow keys.<br>It gets faster the more you score.</p>
+    <button id="startBtn">Start engine</button>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(() => {
+  const container = document.getElementById('canvas-container');
+  const overlay = document.getElementById('overlay');
+  const startCard = document.getElementById('startCard');
+  const scoreVal = document.getElementById('scoreVal');
+  const bestVal = document.getElementById('bestVal');
+  const speedVal = document.getElementById('speedVal');
+  const comboEl = document.getElementById('combo');
+  const pips = [...document.querySelectorAll('.pip')];
+  const vignette = document.getElementById('vignette');
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // ---------- renderer / scene / camera ----------
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  container.appendChild(renderer.domElement);
+
+  const scene = new THREE.Scene();
+
+  function makeSkyTexture(){
+    const c = document.createElement('canvas'); c.width = 2; c.height = 256;
+    const cx = c.getContext('2d');
+    const g = cx.createLinearGradient(0,0,0,256);
+    g.addColorStop(0, '#241726');
+    g.addColorStop(1, '#FF9A56');
+    cx.fillStyle = g; cx.fillRect(0,0,2,256);
+    return new THREE.CanvasTexture(c);
+  }
+  scene.background = makeSkyTexture();
+  scene.fog = new THREE.Fog(0xd9784a, 35, 165);
+
+  const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 300);
+  const BASE_CAM_Y = 1.35;
+  camera.position.set(0, BASE_CAM_Y, 0);
+
+  function resize(){
+    camera.aspect = window.innerWidth/window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  // ---------- lights ----------
+  scene.add(new THREE.HemisphereLight(0xfff2df, 0x1c1220, 0.95));
+  const sun = new THREE.DirectionalLight(0xffd6a8, 0.85);
+  sun.position.set(-25, 35, -15);
+  scene.add(sun);
+
+  // ---------- glow sprite helper ----------
+  function makeGlowTexture(hex){
+    const c = document.createElement('canvas'); c.width = 64; c.height = 64;
+    const cx = c.getContext('2d');
+    const g = cx.createRadialGradient(32,32,0,32,32,32);
+    g.addColorStop(0, hex + 'ff');
+    g.addColorStop(1, hex + '00');
+    cx.fillStyle = g; cx.fillRect(0,0,64,64);
+    return new THREE.CanvasTexture(c);
+  }
+  const oilGlowTex = makeGlowTexture('#FFC24B');
+  const hazardGlowTex = makeGlowTexture('#7C8CFF');
+  const sparkGlowTex = makeGlowTexture('#FFE8B8');
+
+  // ---------- road ----------
+  const LANE_W = 3.0;
+  const LANES = [-LANE_W, 0, LANE_W];
+  const ROAD_W = LANE_W*3 + 3;
+  const SPAN = 170; // recycle length for scrolling elements
+
+  const roadMat = new THREE.MeshLambertMaterial({ color: 0x24232a });
+  const roadMesh = new THREE.Mesh(new THREE.PlaneGeometry(ROAD_W, SPAN*2), roadMat);
+  roadMesh.rotation.x = -Math.PI/2;
+  roadMesh.position.set(0, 0, -SPAN/2 + 20);
+  scene.add(roadMesh);
+
+  const shoulderMat = new THREE.MeshLambertMaterial({ color: 0x1c2420 });
+  [-1,1].forEach(side => {
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(40, SPAN*2), shoulderMat);
+    m.rotation.x = -Math.PI/2;
+    m.position.set(side*(ROAD_W/2 + 20), -0.01, -SPAN/2 + 20);
+    scene.add(m);
+  });
+
+  // dashed lane dividers, recycled
+  const dashMat = new THREE.MeshBasicMaterial({ color: 0xF2ECE4 });
+  const dashes = [];
+  [-LANE_W/2, LANE_W/2].forEach(x => {
+    for(let z = -SPAN; z < 20; z += 6){
+      const d = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.02, 1.6), dashMat);
+      d.position.set(x, 0.02, z);
+      scene.add(d);
+      dashes.push(d);
+    }
+  });
+
+  // roadside poles with small lamp glow
+  const poleMat = new THREE.MeshLambertMaterial({ color: 0x2a2a30 });
+  const poles = [];
+  [-1,1].forEach(side => {
+    for(let z = -SPAN; z < 20; z += 20){
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.08,0.08,3,6), poleMat);
+      pole.position.set(side*(ROAD_W/2+1.4), 1.5, z);
+      scene.add(pole);
+      const lamp = new THREE.Sprite(new THREE.SpriteMaterial({ map: oilGlowTex, transparent:true, depthWrite:false, blending: THREE.AdditiveBlending }));
+      lamp.scale.set(1.4,1.4,1);
+      lamp.position.set(side*(ROAD_W/2+1.4), 3.1, z);
+      scene.add(lamp);
+      poles.push({ pole, lamp });
+    }
+  });
+
+  // ---------- player hood (attached to camera) ----------
+  const hoodMat = new THREE.MeshStandardMaterial({ color: 0x3a3a42, metalness:0.6, roughness:0.4 });
+  const hood = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.16, 1.3), hoodMat);
+  hood.position.set(0, -0.62, -1.05);
+  hood.rotation.x = -0.12;
+  camera.add(hood);
+
+  const pinstripe = new THREE.Mesh(new THREE.BoxGeometry(1.92, 0.03, 0.06), new THREE.MeshBasicMaterial({ color: 0xFF7A3D }));
+  pinstripe.position.set(0, -0.52, -0.45);
+  camera.add(pinstripe);
+
+  [-1,1].forEach(side => {
+    const mirror = new THREE.Mesh(new THREE.BoxGeometry(0.1,0.12,0.05), hoodMat);
+    mirror.position.set(side*0.97, -0.06, -0.85);
+    camera.add(mirror);
+  });
+  scene.add(camera);
+
+  // ---------- lane control ----------
+  let lane = 1;
+  let laneShakeX = 0;
+
+  function setLane(target){
+    lane = Math.max(0, Math.min(2, target));
+  }
+
+  window.addEventListener('keydown', e => {
+    if(e.key === 'ArrowLeft' || e.key === 'a') setLane(lane-1);
+    if(e.key === 'ArrowRight' || e.key === 'd') setLane(lane+1);
+    if((e.key === ' ' || e.key === 'Enter') && !running){
+      const btn = document.getElementById('startBtn');
+      if(btn) btn.click();
+    }
+  });
+
+  let touchStartX = null;
+  container.addEventListener('touchstart', e => { touchStartX = e.touches[0].clientX; }, {passive:true});
+  container.addEventListener('touchend', e => {
+    if(touchStartX === null) return;
+    const endX = (e.changedTouches && e.changedTouches[0]) ? e.changedTouches[0].clientX : touchStartX;
+    const dx = endX - touchStartX;
+    if(Math.abs(dx) > 30){ setLane(lane + (dx > 0 ? 1 : -1)); }
+    else { setLane(lane + (touchStartX < window.innerWidth/2 ? -1 : 1)); }
+    touchStartX = null;
+  }, {passive:true});
+
+  let mouseDownX = null;
+  container.addEventListener('mousedown', e => { mouseDownX = e.clientX; });
+  window.addEventListener('mouseup', e => {
+    if(mouseDownX === null) return;
+    const dx = e.clientX - mouseDownX;
+    if(Math.abs(dx) > 30){ setLane(lane + (dx > 0 ? 1 : -1)); }
+    mouseDownX = null;
+  });
+
+  // ---------- obstacles ----------
+  let obstacles = [];
+  let sparks = [];
+
+  function makeOilMesh(){
+    const g = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.34,0.36,0.62,12), new THREE.MeshStandardMaterial({ color:0x232323, metalness:0.3, roughness:0.6 }));
+    body.position.y = 0.31;
+    g.add(body);
+    const band = new THREE.Mesh(new THREE.CylinderGeometry(0.365,0.365,0.14,12), new THREE.MeshBasicMaterial({ color:0xFF7A3D }));
+    band.position.y = 0.42;
+    g.add(band);
+    const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: oilGlowTex, transparent:true, depthWrite:false, blending: THREE.AdditiveBlending }));
+    glow.scale.set(1.6,1.6,1);
+    glow.position.y = 0.4;
+    g.add(glow);
+    return g;
+  }
+
+  function makeHumanMesh(){
+    const g = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.2,0.24,0.85,8), new THREE.MeshLambertMaterial({ color:0x4b4a63 }));
+    body.position.y = 0.42;
+    g.add(body);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.2,10,10), new THREE.MeshLambertMaterial({ color:0xd9b99b }));
+    head.position.y = 0.96;
+    g.add(head);
+    const ring = new THREE.Mesh(new THREE.CircleGeometry(0.55,16), new THREE.MeshBasicMaterial({ color:0x7C8CFF, transparent:true, opacity:0.35, blending: THREE.AdditiveBlending }));
+    ring.rotation.x = -Math.PI/2;
+    ring.position.y = 0.03;
+    g.add(ring);
+    g.userData.ring = ring;
+    g.userData.bobPhase = Math.random()*Math.PI*2;
+    return g;
+  }
+
+  // is a lane occupied near a given z? (cars count both their lane and the lane they are moving into)
+  function laneBusy(laneIdx, z, margin, ignore){
+    return obstacles.some(o => o !== ignore && Math.abs(o.mesh.position.z - z) < margin &&
+      (o.lane === laneIdx || (o.type === 'car' && o.target === laneIdx)));
+  }
+
+  function addObstacle(type, laneIdx, z){
+    const isHuman = type === 'human';
+    const mesh = isHuman ? makeHumanMesh() : makeOilMesh();
+    mesh.position.set(LANES[laneIdx], 0, z);
+    scene.add(mesh);
+    const o = { mesh, lane: laneIdx, type };
+    // as the score grows, more people walk across the road
+    if(isHuman && score >= 4 && Math.random() < Math.min(0.15 + score*0.01, 0.55)){
+      o.walk = (Math.random() < 0.5 ? -1 : 1) * (1.4 + Math.random()*1.2);
+    }
+    obstacles.push(o);
+    return o;
+  }
+
+  // a wave is either a crowd of people (1-2 lanes, always one lane left open) or oil
+  function spawnWave(){
+    const z0 = -SPAN - 10;
+    const free = [0,1,2].filter(l => !laneBusy(l, z0, 12)).sort(() => Math.random() - 0.5);
+    if(free.length === 0) return;
+    const hazardWave = Math.random() < Math.min(0.6 + score*0.004, 0.88);
+    if(hazardWave){
+      let count = Math.random() < Math.min(0.4 + score*0.01, 0.85) ? 2 : 1;
+      count = Math.min(count, free.length - 1);
+      for(let i = 0; i < count; i++) addObstacle('human', free[i], z0 - Math.random()*6);
+      if(free.length > count && Math.random() < 0.5) addObstacle('oil', free[count], z0 - Math.random()*6);
+    } else {
+      addObstacle('oil', free[0], z0);
+      if(free.length > 1 && Math.random() < 0.3) addObstacle('oil', free[1], z0 - 5);
+    }
+  }
+
+  // ---- traffic cars ----
+  const CAR_COLORS = [0x8c93a3, 0xd8d2c4, 0x4f6d8f, 0x2f5d50, 0x6b4f7a, 0xb5b0a6];
+  function makeCarMesh(){
+    const g = new THREE.Group();
+    const color = CAR_COLORS[Math.floor(Math.random()*CAR_COLORS.length)];
+    const body = new THREE.Mesh(new THREE.BoxGeometry(1.7,0.55,3.8), new THREE.MeshLambertMaterial({ color }));
+    body.position.y = 0.58; g.add(body);
+    const cabin = new THREE.Mesh(new THREE.BoxGeometry(1.4,0.45,1.9), new THREE.MeshLambertMaterial({ color:0x1d1d24 }));
+    cabin.position.set(0,1.05,-0.2); g.add(cabin);
+    const tailMat = new THREE.MeshBasicMaterial({ color:0xff3b30 });
+    const wheelMat = new THREE.MeshLambertMaterial({ color:0x111111 });
+    const glows = [];
+    [-1,1].forEach(side => {
+      const tl = new THREE.Mesh(new THREE.BoxGeometry(0.42,0.14,0.06), tailMat);
+      tl.position.set(side*0.58, 0.68, 1.91); g.add(tl);
+      [-1.2,1.2].forEach(wz => {
+        const w = new THREE.Mesh(new THREE.CylinderGeometry(0.34,0.34,0.25,10), wheelMat);
+        w.rotation.z = Math.PI/2;
+        w.position.set(side*0.88, 0.34, wz); g.add(w);
+      });
+      const blink = new THREE.Sprite(new THREE.SpriteMaterial({ map: oilGlowTex, transparent:true, depthWrite:false, blending: THREE.AdditiveBlending }));
+      blink.scale.set(1.3,1.3,1);
+      blink.position.set(side*0.82, 0.8, 1.98);
+      blink.visible = false;
+      g.add(blink);
+      glows.push(blink);   // index 0 = left, 1 = right
+    });
+    const zone = new THREE.Mesh(new THREE.PlaneGeometry(2.3,4.3), new THREE.MeshBasicMaterial({ color:0x7C8CFF, transparent:true, opacity:0.2, blending: THREE.AdditiveBlending, depthWrite:false }));
+    zone.rotation.x = -Math.PI/2; zone.position.y = 0.03; g.add(zone);
+    g.userData.glows = glows;
+    return g;
+  }
+
+  function spawnCar(){
+    const z0 = -SPAN - 10;
+    const lanes = [0,1,2].filter(l => !laneBusy(l, z0, 25));
+    if(!lanes.length) return false;
+    const laneIdx = lanes[Math.floor(Math.random()*lanes.length)];
+    const mesh = makeCarMesh();
+    mesh.position.set(LANES[laneIdx], 0, z0);
+    scene.add(mesh);
+    obstacles.push({ mesh, lane: laneIdx, type:'car', target: laneIdx, phase:'cruise', decided:false, blink:0, glows: mesh.userData.glows });
+    return true;
+  }
+
+  // cars signal, then swerve - often straight into your lane
+  function updateCar(o, dt){
+    const m = o.mesh;
+    const trigger = -Math.max(45, Math.min(150, speed*2.0));
+    if(!o.decided && m.position.z > trigger){
+      o.decided = true;
+      const diff = lane - o.lane;
+      if(diff !== 0 && Math.random() < Math.min(0.6 + score*0.01, 0.95)){
+        let target;
+        if(Math.abs(diff) === 1 && Math.random() < 0.75) target = lane;
+        else {
+          const adj = [o.lane-1, o.lane+1].filter(l => l >= 0 && l <= 2);
+          target = adj[Math.floor(Math.random()*adj.length)];
+        }
+        if(target !== o.lane && !laneBusy(target, m.position.z, 8, o)){
+          o.target = target; o.phase = 'blink'; o.blink = 0.7;
+        }
+      }
+    }
+    if(o.phase === 'blink'){
+      o.blink -= dt;
+      const on = reduceMotion ? true : Math.floor(o.blink/0.12) % 2 === 0;
+      const side = LANES[o.target] < LANES[o.lane] ? 0 : 1;
+      o.glows[side].visible = on;
+      o.glows[1-side].visible = false;
+      if(o.blink <= 0){ o.phase = 'move'; o.glows[0].visible = false; o.glows[1].visible = false; }
+    } else if(o.phase === 'move'){
+      const tx = LANES[o.target], dx = tx - m.position.x, step = 5.5*dt;
+      if(Math.abs(dx) <= step){ m.position.x = tx; o.lane = o.target; o.phase = 'done'; m.rotation.y = 0; }
+      else { m.position.x += Math.sign(dx)*step; m.rotation.y = -Math.sign(dx)*0.14; }
+    }
+  }
+
+  function burst(pos, hex, glowTex){
+    for(let i=0;i<6;i++){
+      const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, transparent:true, depthWrite:false, blending: THREE.AdditiveBlending }));
+      s.scale.set(0.35,0.35,1);
+      s.position.copy(pos);
+      scene.add(s);
+      const a = Math.random()*Math.PI*2;
+      sparks.push({ sprite:s, vx:Math.cos(a)*1.6, vy:Math.random()*2+0.6, vz:Math.sin(a)*1.6, life:1 });
+    }
+  }
+
+  function loseLife(shake){
+    lives--;
+    const idx = 3 - lives - 1;
+    if(pips[idx]) pips[idx].classList.add('lost');
+    combo = 0; comboEl.style.opacity = 0;
+    flashVignette();
+    laneShakeX = shake || 0.3;
+    if(lives <= 0) endGame();
+  }
+
+  function flashVignette(){
+    vignette.style.boxShadow = 'inset 0 0 140px 24px rgba(124,140,255,0.5)';
+    setTimeout(() => { vignette.style.boxShadow = 'inset 0 0 0 0 rgba(124,140,255,0)'; }, 60);
+  }
+
+  // ---------- state ----------
+  let best = 0;
+  let running = false;
+  let score = 0, combo = 0, lives = 3;
+  let speed = 24;          // world units per second
+  let spawnGap = 900;      // ms
+  let lastSpawn = 0;
+  let lastFrame = 0;
+  let lastCarSpawn = 0, carGap = 1800;
+
+  function resetGame(){
+    obstacles.forEach(o => scene.remove(o.mesh));
+    obstacles = [];
+    sparks.forEach(s => scene.remove(s.sprite));
+    sparks = [];
+    score = 0; combo = 0; lives = 3; speed = 24; spawnGap = 800; lastSpawn = 0;
+    lane = 1; laneShakeX = 0;
+    pips.forEach(p => p.classList.remove('lost'));
+    scoreVal.textContent = '0';
+    comboEl.style.opacity = 0;
+    camera.position.x = LANES[1];
+  }
+
+  function showOverlay(gameOver){
+    overlay.classList.remove('hidden');
+    startCard.innerHTML = gameOver
+      ? `<p class="result">Wrecked</p>
+         <p class="result-nums">You collected ${score} oil · best ${best}</p>
+         <button id="startBtn">Drive again</button>`
+      : `<p class="title">Redline</p>
+         <p class="sub">Grab the oil. Dodge people and traffic.<br>Steer with your finger, mouse drag, or arrow keys.<br>It gets faster the more you score.</p>
+         <button id="startBtn">Start engine</button>`;
+    document.getElementById('startBtn').addEventListener('click', startGame);
+  }
+
+  function startGame(){
+    resetGame();
+    overlay.classList.add('hidden');
+    running = true;
+    lastFrame = performance.now();
+    lastCarSpawn = lastFrame; carGap = 1800;
+    requestAnimationFrame(loop);
+  }
+
+  function endGame(){
+    running = false;
+    if(score > best){ best = score; bestVal.textContent = best; }
+    showOverlay(true);
+  }
+
+  function wrap(z){
+    let nz = z;
+    while(nz > 18) nz -= SPAN;
+    return nz;
+  }
+
+  function loop(now){
+    if(!running) return;
+    const dt = Math.min((now - lastFrame)/1000, 0.05);
+    lastFrame = now;
+
+    speed = Math.min(24 + score*1.0, 74);
+    const dz = speed * dt;
+
+    // scrolling world
+    dashes.forEach(d => { d.position.z = wrap(d.position.z + dz); });
+    poles.forEach(p => {
+      const nz = wrap(p.pole.position.z + dz);
+      p.pole.position.z = nz; p.lamp.position.z = nz;
+    });
+
+    // people / oil waves
+    if(now - lastSpawn > spawnGap){
+      spawnWave();
+      lastSpawn = now;
+      spawnGap = Math.max(320, spawnGap - 6);
+    }
+
+    // traffic cars that cut in (never more than 2 on the road)
+    if(now - lastCarSpawn > carGap && obstacles.filter(o => o.type === 'car').length < 2){
+      if(spawnCar()){
+        lastCarSpawn = now;
+        carGap = Math.max(1200, 2800 - score*15) + Math.random()*1400;
+      }
+    }
+
+    // lane easing + shake decay
+    laneShakeX *= 0.86;
+    const targetX = LANES[lane] + (Math.random()-0.5)*laneShakeX;
+    camera.position.x += (targetX - camera.position.x) * 0.16;
+    if(!reduceMotion) camera.position.y = BASE_CAM_Y + Math.sin(now/230)*0.012;
+
+    // obstacles
+    obstacles = obstacles.filter(o => {
+      const m = o.mesh;
+      const prevZ = m.position.z;
+      m.position.z += dz;
+      const z = m.position.z;
+
+      if(o.type === 'human'){
+        const bob = Math.sin(now/180 + m.userData.bobPhase)*0.04;
+        m.children[0].position.y = 0.42 + bob;
+        m.children[1].position.y = 0.96 + bob;
+        if(o.walk){
+          m.position.x += o.walk * dt;
+          if(m.position.x > 4.0){ m.position.x = 4.0; o.walk = -Math.abs(o.walk); }
+          if(m.position.x < -4.0){ m.position.x = -4.0; o.walk = Math.abs(o.walk); }
+        }
+      } else if(o.type === 'car'){
+        updateCar(o, dt);
+      }
+
+      // swept hit test so fast objects can't skip through the player
+      const isCar = o.type === 'car';
+      const zFirst = isCar ? -3.4 : -1.6;
+      const zLast  = isCar ? 1.5 : -0.6;
+      const reach  = isCar ? 1.45 : 1.15;
+      if(z >= zFirst && prevZ <= zLast && Math.abs(m.position.x - LANES[lane]) < reach){
+        if(o.type === 'oil'){
+          combo++;
+          const mult = 1 + Math.floor(combo/5);
+          score += mult;
+          scoreVal.textContent = score;
+          if(combo >= 5){ comboEl.textContent = `×${mult} combo`; comboEl.style.opacity = 1; }
+          burst(m.position, '#FFC24B', sparkGlowTex);
+        } else {
+          loseLife(isCar ? 0.55 : 0.3);
+        }
+        scene.remove(m);
+        return false;
+      }
+      if(z > (isCar ? 8 : 4)){
+        if(o.type === 'oil'){ combo = 0; comboEl.style.opacity = 0; }
+        scene.remove(m);
+        return false;
+      }
+      return true;
+    });
+
+    // sparks
+    sparks = sparks.filter(s => {
+      s.sprite.position.x += s.vx*dt;
+      s.sprite.position.y += s.vy*dt;
+      s.sprite.position.z += s.vz*dt;
+      s.vy -= 2.4*dt;
+      s.life -= dt*2.2;
+      s.sprite.material.opacity = Math.max(s.life,0);
+      if(s.life <= 0){ scene.remove(s.sprite); return false; }
+      return true;
+    });
+
+    speedVal.textContent = Math.round(30 + speed*3.6) + ' km/h';
+
+    renderer.render(scene, camera);
+    if(running) requestAnimationFrame(loop);
+  }
+
+  bestVal.textContent = '0';
+  speedVal.textContent = '0 km/h';
+  showOverlay(false);
+  renderer.render(scene, camera);
+})();
+</script>
+</body>
+</html>
